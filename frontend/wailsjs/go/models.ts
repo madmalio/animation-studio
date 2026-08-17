@@ -372,6 +372,7 @@ export namespace models {
 		}
 	}
 	export class Keyframe {
+	    id?: string;
 	    frame: number;
 	    value: Record<string, any>;
 	
@@ -381,6 +382,7 @@ export namespace models {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
 	        this.frame = source["frame"];
 	        this.value = source["value"];
 	    }

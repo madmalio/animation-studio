@@ -25,6 +25,12 @@ export class PuppetRenderer {
   private budget: PuppetTextureBudget;
   private assets: ReadonlyMap<string, StudioAsset>;
   private lastKey = '';
+  private disposed = false;
+
+  /** Serialized paint pipeline: all paint() calls coalesce onto one tail. */
+  private tail: Promise<void> = Promise.resolve();
+  private pending: Puppet | null = null;
+  private draining = false;
 
   constructor(opts: { store: TextureStore; assets: ReadonlyMap<string, StudioAsset>; puppetId?: string }) {
     this.puppetId = opts.puppetId ?? 'puppet';
@@ -33,11 +39,39 @@ export class PuppetRenderer {
   }
 
   /**
+   * Renders the given puppet state into the scene graph. Callers may invoke
+   * this from anywhere (React effects, a playback engine tick) — the work is
+   * serialized internally and coalesced to the latest requested state, so
+   * bursts of transforms during playback can never interleave mid-rebuild.
+   */
+  paint(puppet: Puppet): Promise<void> {
+    this.pending = puppet;
+    if (!this.draining) {
+      this.draining = true;
+      this.tail = this.tail.then(() => this.pump());
+    }
+    return this.tail;
+  }
+
+  private async pump(): Promise<void> {
+    try {
+      while (this.pending && !this.disposed) {
+        const target = this.pending as Puppet;
+        this.pending = null;
+        await this.buildScene(target);
+      }
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  /**
    * Builds the full scene graph for the given puppet state from scratch.
    * Any previously-held textures are released first, so rapid viseme/expression
    * changes cannot leak.
    */
-  async paint(puppet: Puppet): Promise<void> {
+  private async buildScene(puppet: Puppet): Promise<void> {
+    if (this.disposed) return;
     const key = `${puppet.activeViseme}:${puppet.activeExpression}`;
     if (this.lastKey === key && this.root.children.length > 0) {
       this.applyTransform(puppet);
@@ -134,6 +168,8 @@ export class PuppetRenderer {
 
   /** Removes every child and releases all textures. Safe to call multiple times. */
   destroy(): void {
+    this.disposed = true;
+    this.pending = null;
     this.clearChildren();
     this.budget.release();
     this.sprites.clear();

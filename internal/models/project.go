@@ -61,14 +61,16 @@ type Timeline struct {
 // Track is one animation lane bound to a scene target.
 type Track struct {
 	ID        string     `json:"id"`
-	Kind      string     `json:"kind"` // puppet | prop | audio
+	Kind      string     `json:"kind"` // puppet | viseme | expression | prop | audio
 	TargetID  string     `json:"targetId"`
 	Keyframes []Keyframe `json:"keyframes"`
 }
 
 // Keyframe is a single timing point on a track. Value is a JSON object
-// mapping property names to their animated values.
+// mapping property names to their animated values. ID is the stable
+// identity the editor uses to address moves/deletes across save/open.
 type Keyframe struct {
+	ID    string         `json:"id,omitempty"`
 	Frame int            `json:"frame"`
 	Value map[string]any `json:"value"`
 }

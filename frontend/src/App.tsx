@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Graphics, Text, type Ticker } from 'pixi.js';
 import type { Puppet } from './types/puppet';
-import type { Project } from './types/project';
+import type { Project, Timeline } from './types/project';
 import type { AssetScanResult, StudioAsset } from './types/asset';
 import { isError } from './types/wails';
 import {
@@ -16,9 +16,12 @@ import {
 import { buildDemoPuppet, demoAssetsById, withExpression, withViseme } from './samples/demoPuppet';
 import { StudioStage, useStudioStage } from './engine/StudioStage';
 import { PuppetRenderer } from './engine/puppetRenderer';
+import { PlaybackEngine } from './engine/playbackEngine';
+import { normalizeTimeline } from './engine/timelineModel';
 import { Toolbar } from './components/Toolbar';
 import { AssetLibraryPanel } from './components/AssetLibraryPanel';
 import { PuppetPanel } from './components/PuppetPanel';
+import { TimelinePanel } from './components/TimelinePanel';
 import { StatusBar } from './components/StatusBar';
 import { NoticeBanner, type Notice } from './components/NoticeBanner';
 import './App.css';
@@ -44,11 +47,48 @@ function App() {
   const [scanning, setScanning] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
+  // Stable playback engine. The cleanup only stops its rAF loop; playback
+  // state lives in the engine instance for the app's lifetime.
+  const [engine] = useState(() => new PlaybackEngine({ fps: 24, durationFrames: 120 }));
+  useEffect(() => () => engine.cancelLoop(), [engine]);
+
   const assetsById = useMemo(() => {
     const map = demoAssetsById();
     for (const asset of library?.assets ?? []) map.set(asset.id, asset);
     return map;
   }, [library]);
+
+  const audioAssets = useMemo(
+    () => (library?.assets ?? []).filter((asset) => asset.kind === 'audio'),
+    [library],
+  );
+
+  const activePuppetId = puppet.id;
+
+  // Keep the playback engine in sync with the editor's live document.
+  useEffect(() => {
+    engine.setPuppet(puppet);
+  }, [engine, puppet]);
+
+  useEffect(() => {
+    engine.setFps(project?.viewport.fps ?? 24);
+    engine.setTimeline(project?.timeline ?? null);
+    engine.setDuration(project?.timeline?.durationFrames ?? 120);
+  }, [engine, project]);
+
+  // Backfill canonical lanes / keyframe ids on every opened document.
+  useEffect(() => {
+    if (project?.timeline) {
+      const next = normalizeTimeline(project.timeline, activePuppetId);
+      if (next !== project.timeline) {
+        setProject((prev) => (prev && prev.timeline === project.timeline ? { ...prev, timeline: next } : prev));
+      }
+    }
+  }, [activePuppetId, project]);
+
+  const handleTimelineChange = useCallback((timeline: Timeline) => {
+    setProject((prev) => (prev ? { ...prev, timeline } : prev));
+  }, []);
 
   const flash = useCallback((notice: Notice, timeoutMs = 5000) => {
     setNotice(notice);
@@ -70,8 +110,9 @@ function App() {
     }
     setProject(result.data);
     setPuppet(buildDemoPuppet());
+    engine.stop();
     flash({ kind: 'success', title: 'New project created' });
-  }, [flash, requireRuntime]);
+  }, [engine, flash, requireRuntime]);
 
   const handleOpen = useCallback(async () => {
     if (!requireRuntime()) return;
@@ -88,8 +129,9 @@ function App() {
     }
     setProject(result.data);
     setPuppet(result.data.puppets[0] ?? buildDemoPuppet());
+    engine.stop();
     flash({ kind: 'success', title: `Opened ${result.data.name}` });
-  }, [flash, requireRuntime]);
+  }, [engine, flash, requireRuntime]);
 
   /** Embeds the current editor puppet as the first project puppet. */
   const withEditorPuppet = useCallback(
@@ -194,7 +236,7 @@ function App() {
         <main className="stage-host">
           {notice ? <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} /> : null}
           <StudioStage className="stage">
-            <DemoScene puppet={puppet} assetsById={assetsById} background={project?.background.color} />
+            <DemoScene puppet={puppet} assetsById={assetsById} background={project?.background.color} engine={engine} />
           </StudioStage>
         </main>
         <PuppetPanel
@@ -204,6 +246,13 @@ function App() {
           onExpressionChange={(expression) => setPuppet((p) => withExpression(p, expression))}
         />
       </div>
+      <TimelinePanel
+        engine={engine}
+        project={project}
+        puppetId={puppet.id}
+        audioAssets={audioAssets}
+        onTimelineChange={handleTimelineChange}
+      />
       <StatusBar
         project={project}
         assetCount={library?.imageCount ?? 0}
@@ -218,6 +267,7 @@ interface DemoSceneProps {
   puppet: Puppet;
   assetsById: ReadonlyMap<string, StudioAsset>;
   background?: string;
+  engine: PlaybackEngine;
 }
 
 /**
@@ -226,7 +276,7 @@ interface DemoSceneProps {
  * a ticker-driven HUD label in the screen-space UI layer. Every resource the
  * renderer or the UI acquires is released in the matching effect cleanup.
  */
-function DemoScene({ puppet, assetsById, background }: DemoSceneProps) {
+function DemoScene({ puppet, assetsById, background, engine }: DemoSceneProps) {
   const stage = useStudioStage();
   const rendererRef = useRef<PuppetRenderer | null>(null);
 
@@ -253,6 +303,15 @@ function DemoScene({ puppet, assetsById, background }: DemoSceneProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
+
+  // Bind the live renderer so the playback engine can drive it for scrolling
+  // and playback, following the active puppet where the renderer plugs in.
+  useEffect(() => {
+    engine.attachRenderer(puppet.id, rendererRef.current);
+    return () => {
+      engine.attachRenderer(puppet.id, null);
+    };
+  }, [engine, puppet.id]);
 
   // Repaint whenever puppet state (viseme/expression) changes.
   useEffect(() => {

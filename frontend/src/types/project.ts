@@ -29,11 +29,13 @@ export interface Background {
 }
 
 export interface Keyframe {
+  /** Stable identity used to move/delete a keyframe across save/open. */
+  id: string;
   frame: number;
   value: Record<string, unknown>;
 }
 
-export type TrackKind = 'puppet' | 'prop' | 'audio';
+export type TrackKind = 'puppet' | 'viseme' | 'expression' | 'prop' | 'audio';
 
 export interface Track {
   id: string;
