@@ -1,0 +1,40 @@
+# --- Wails build output ---
+build/bin/
+
+# --- Go ---
+# dependencies are pinned in go.mod/go.sum, no vendor dir needed
+/vendor/
+*.test
+*.out
+coverage.*
+*.prof
+
+# --- Node / frontend ---
+# installed dependencies (matches node_modules at any depth)
+node_modules/
+
+# compiled frontend bundle (generated; required by go:embed before `go build`)
+frontend/dist/
+
+# wails dev checksum artifact
+frontend/package.json.md5
+
+# stray lockfiles accidentally created outside the frontend
+/package-lock.json
+
+# --- Environment ---
+.env
+.env.local
+.env.*.local
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+*.swp
+.obsidian/
+
+# --- Tooling cache ---
+.codebase-memory/
